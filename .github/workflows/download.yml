@@ -1,0 +1,36 @@
+name: Download YouTube and Create GitHub Release
+
+on:
+  repository_dispatch:
+    types: [download]
+
+jobs:
+  download-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # برای ایجاد Release ضروری است
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install yt-dlp
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          pip install yt-dlp
+
+      - name: Download video
+        run: |
+          yt-dlp -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" \
+            -o "video.mp4" \
+            "${{ github.event.client_payload.url }}"
+
+      - name: Upload to GitHub Release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: "video.mp4"
+          tag: v1.0.${{ github.run_number }}
+          name: "YouTube Download #${{ github.run_number }}"
+          body: "Automated upload from workflow."
+          token: ${{ secrets.GITHUB_TOKEN }}
