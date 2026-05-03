@@ -1,4 +1,4 @@
-name: Download YouTube and Create GitHub Release
+name: Download YouTube and Upload to Release
 
 on:
   repository_dispatch:
@@ -8,29 +8,60 @@ jobs:
   download-and-release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # برای ایجاد Release ضروری است
+      contents: write
 
     steps:
-      - name: Checkout
+      - name: Checkout (with retry)
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+        # اگر checkout شکست خورد، رانرهای گیت‌هاب معمولاً خودکار retry می‌کنن،
+        # ولی اینجا مطمئن می‌شیم.
 
-      - name: Install yt-dlp
+      - name: Install dependencies (apt retry)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-          pip install yt-dlp
+          echo "Updating apt..."
+          for i in 1 2 3; do
+            sudo apt-get update -qq && break || sleep 10
+          done
+          echo "Installing ffmpeg..."
+          for i in 1 2 3; do
+            sudo apt-get install -y -qq ffmpeg && break || sleep 10
+          done
+
+      - name: Install yt-dlp (pip retry)
+        run: |
+          pip install --retries 10 --timeout 30 yt-dlp
+
+      - name: Set quality parameter
+        id: vars
+        run: |
+          # خواندن کیفیت از payload؛ اگر نبود، best رو برمیداره
+          QUALITY="${{ github.event.client_payload.quality }}"
+          if [[ -z "$QUALITY" ]]; then
+            QUALITY="best[ext=mp4]/best"
+          fi
+          echo "Using format: $QUALITY"
+          echo "format=$QUALITY" >> $GITHUB_OUTPUT
 
       - name: Download video
         run: |
-          yt-dlp -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" \
+          yt-dlp -f "${{ steps.vars.outputs.format }}" \
             -o "video.mp4" \
-            "${{ github.event.client_payload.url }}"
+            "${{ github.event.client_payload.url }}" || { echo "Download failed, retrying with default format..."; yt-dlp -f "best[ext=mp4]/best" -o "video.mp4" "${{ github.event.client_payload.url }}"; }
 
-      - name: Upload to GitHub Release
+      - name: Verify file
+        run: |
+          if [ ! -f video.mp4 ] || [ ! -s video.mp4 ]; then
+            echo "File video.mp4 is missing or empty!"
+            exit 1
+          fi
+
+      - name: Upload to Release
         uses: ncipollo/release-action@v1
         with:
           artifacts: "video.mp4"
-          tag: v1.0.${{ github.run_number }}
-          name: "YouTube Download #${{ github.run_number }}"
-          body: "Automated upload from workflow."
+          tag: "v1.${{ github.run_number }}"
+          name: "Download #${{ github.run_number }}"
+          body: "Downloaded from: ${{ github.event.client_payload.url }}"
           token: ${{ secrets.GITHUB_TOKEN }}
