@@ -11,18 +11,26 @@ jobs:
       contents: write
 
     steps:
-      # نیازی به checkout نیست، مگر اینکه فایل دیگری از مخزن لازم داشته باشیم
-      # - uses: actions/checkout@v4
-
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22' # آخرین نسخهٔ پایدار
+          node-version: '22'  # برای چالش‌های جاوااسکریپت
 
       - name: Create cookies file from secret
         run: echo "${{ secrets.YOUTUBE_COOKIES }}" > cookies.txt
 
-      - name: Install yt-dlp
+      - name: Install ffmpeg with retry
+        run: |
+          echo "Updating apt cache..."
+          for i in 1 2 3; do
+            sudo apt-get update -qq && break || sleep 10
+          done
+          echo "Installing ffmpeg..."
+          for i in 1 2 3; do
+            sudo apt-get install -y -qq ffmpeg && break || sleep 10
+          done
+
+      - name: Install yt-dlp with retry
         run: pip install --retries 10 --timeout 30 yt-dlp
 
       - name: Set quality parameter
@@ -42,7 +50,13 @@ jobs:
             --js-runtimes node \
             --remote-components ejs:github \
             -o "video.mp4" \
-            "${{ github.event.client_payload.url }}" || yt-dlp -f "best[ext=mp4]/best" --cookies cookies.txt --js-runtimes node --remote-components ejs:github -o "video.mp4" "${{ github.event.client_payload.url }}"
+            "${{ github.event.client_payload.url }}" \
+            || yt-dlp -f "best[ext=mp4]/best" \
+                --cookies cookies.txt \
+                --js-runtimes node \
+                --remote-components ejs:github \
+                -o "video.mp4" \
+                "${{ github.event.client_payload.url }}"
 
       - name: Verify file
         run: |
